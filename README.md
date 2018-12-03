@@ -1,0 +1,3 @@
+# Minicoin
+
+![Screenshot](screenshot.jpg)
