@@ -19,6 +19,12 @@
 #endif
 #include <AutoConnect.h>
 
+#if CONFIG_FREERTOS_UNICORE
+#define ARDUINO_RUNNING_CORE 0
+#else
+#define ARDUINO_RUNNING_CORE 1
+#endif
+
 #include "font_latoblack.h"
 
 // Include the correct display library
@@ -42,6 +48,8 @@ SSD1306Wire  display(0x3c, 22, 23);
 
 WebServer Server;
 AutoConnect Portal(Server);
+
+bool online;
 
 float btcusd;
 float ethusd;
@@ -67,24 +75,37 @@ void setup()
     Serial.println("WiFi connected: " + WiFi.localIP().toString());
   }
 
+  online = false;
+
   // Initialising the UI will init the display too.
   display.init();
   display.flipScreenVertically();
-  display.setFont(ArialMT_Plain_10);
+
+  xTaskCreatePinnedToCore(fetchBtc, "fetchBtc", 4096, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(fetchEth, "fetchEth", 4096, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
 }
 
-int value = 0;
-
 void loop()
-{
+{  
     Portal.handleClient();
 
-    // clear the display
-    display.clear();
+    online = true;
 
-    fetchBtc();
-    Serial.print("BTC/USD: ");
-    Serial.println(btcusd);
+    renderPrice();
+}
+
+void renderPrice() {
+  display.clear();
+  if (btcusd == 0 && ethusd == 0) {
+    display.setFont(Lato_Black_16);
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.drawString(64, 26, "Connecting...");
+    
+    display.display();
+    return;
+  }
+// clear the display
+    display.clear();
 
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.setFont(ArialMT_Plain_10);
@@ -101,10 +122,7 @@ void loop()
     display.drawString(0, 20, String(btcusd));
     display.setFont(ArialMT_Plain_10);
     display.drawString(0, 48, String("V: " + String(btcvol, 2)));
-
-    fetchEth();
-    Serial.print("ETH/USD: ");
-    Serial.println(ethusd);
+    
     
     display.setTextAlignment(TEXT_ALIGN_RIGHT);
     display.setFont(ArialMT_Plain_10);
@@ -123,11 +141,10 @@ void loop()
     
     // write the buffer to the display
     display.display();
-
-    delay(1000);
 }
 
-void fetchBtc() {
+void fetchBtc(void *pvParameters) {
+  while (online) {
     HTTPClient http;
     http.begin("https://api.bitfinex.com/v1/pubticker/btcusd");
     int httpCode = http.GET();
@@ -154,15 +171,23 @@ void fetchBtc() {
               _btcusd = btcusd;
               btcusd = root["last_price"].as<float>();
               btcvol = root["volume"].as<float>();
+
+              Serial.print("BTC/USD: ");
+              Serial.println(String(btcusd) + "@" + String(btcvol));
         }
     } else {
         Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        btcusd = 0;
+        btcvol = 0;
     }
 
     http.end();
+    delay(1000);
+  }
 }
 
-void fetchEth() {
+void fetchEth(void *pvParameters) {
+  while (online) {
     HTTPClient http;
     http.begin("https://api.bitfinex.com/v1/pubticker/ethusd");
     int httpCode = http.GET();
@@ -189,10 +214,17 @@ void fetchEth() {
               _ethusd = ethusd;
               ethusd = root["last_price"].as<float>();
               ethvol = root["volume"].as<float>();
+
+              Serial.print("ETH/USD: ");
+              Serial.println(String(ethusd) + "@" + String(ethvol));
         }
     } else {
         Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        ethusd = 0;
+        ethvol = 0;
     }
 
     http.end();
+    delay(1000);
+  }
 }
