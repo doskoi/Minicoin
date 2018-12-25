@@ -51,17 +51,21 @@ AutoConnect Portal(Server);
 
 bool online;
 
-float btcusd;
-float ethusd;
+String symbol;
 
-float _btcusd;
-float _ethusd;
-
-float btcvol;
-float ethvol;
+float BID;
+float BID_SIZE;
+float ASK;
+float ASK_SIZE;
+float DAILY_CHANGE;
+float DAILY_CHANGE_PERC;
+float LAST_PRICE;
+float VOLUME;
+float _HIGH;
+float _LOW;
 
 void rootPage() {
-  char content[] = "Hello, world";
+  char content[] = "Hello, Trader";
   Server.send(200, "text/plain", content);
 }
 
@@ -77,12 +81,13 @@ void setup()
 
   online = false;
 
+  symbol = "tETHUSD";
   // Initialising the UI will init the display too.
   display.init();
   display.flipScreenVertically();
+  display.setBrightness(196);
 
-  xTaskCreatePinnedToCore(fetchBtc, "fetchBtc", 4096, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
-  xTaskCreatePinnedToCore(fetchEth, "fetchEth", 4096, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(fetchTicker, "fetchTicker", 4096, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
 }
 
 void loop()
@@ -95,133 +100,85 @@ void loop()
 }
 
 void renderPrice() {
-  display.clear();
-  if (btcusd == 0 && ethusd == 0) {
+  // clear the display
+    display.clear();
+  if (LAST_PRICE == 0) {
     display.setFont(Lato_Black_16);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.drawString(64, 26, "Connecting...");
+    display.drawString(64, 18, "Connecting...\nBitfinex");
     
     display.display();
     return;
   }
-// clear the display
-    display.clear();
-
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(0, 0, "BTC/USD");
-    display.setFont(Lato_Black_16);
-//    String symbol;
-//    if (btcusd > _btcusd) {
-//      symbol = "⬆";
-//    }
-//    if (btcusd < _btcusd) {
-//      symbol = "⬇";
-//    }
-//    display.drawString(0, 20, String(String(btcusd) + symbol));
-    display.drawString(0, 20, String(btcusd));
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(0, 48, String("V: " + String(btcvol, 2)));
-    
-    
-    display.setTextAlignment(TEXT_ALIGN_RIGHT);
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(128, 0, "ETH/USD");
-    display.setFont(Lato_Black_16);
-//    if (ethusd > _ethusd) {
-//      symbol = "△";
-//    }
-//    if (ethusd < _ethusd) {
-//      symbol = "▽";
-//    }
-//    display.drawString(128, 20, String(String(ethusd) + symbol));
-    display.drawString(128, 20, String(ethusd));
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(128, 48, String("V: " + String(ethvol, 2)));
-    
-    // write the buffer to the display
-    display.display();
+  // Title
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.setFont(Lato_Black_16);
+  display.drawString(0, 0, "ETH/USD");
+  
+  // Price
+  display.setTextAlignment(TEXT_ALIGN_RIGHT);
+  display.drawString(128, 0, String(LAST_PRICE));
+  // Chg
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(128, 18, String( String(DAILY_CHANGE, 2) + " (" + String(DAILY_CHANGE_PERC * 100, 2) + "%)" ));
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  // Vol
+  display.drawString(0, 18, String("VOL\n" + String(VOLUME, 0)));
+  // HIGH & LOW
+  display.drawString(0, 54, String("LOW " + String(_LOW, 2) + "   HIGH " + String(_HIGH, 2)));
+  // Bid & Ask
+  display.drawString(0, 42, String("BID " + String(BID, 2) + "   ASK " + String(ASK, 2)));
+  // Bar
+  display.drawProgressBar(62, 32, 64, 8, (BID_SIZE / (ASK_SIZE + BID_SIZE) ) * 100);
+  
+  // write the buffer to the display
+  display.display();
 }
 
-void fetchBtc(void *pvParameters) {
+void fetchTicker(void *pvParameters) {
   while (online) {
     HTTPClient http;
-    http.begin("https://api.bitfinex.com/v1/pubticker/btcusd");
+    http.begin("https://api.bitfinex.com/v2/ticker/" + symbol);
     int httpCode = http.GET();
 
     // httpCode will be negative on error
     if(httpCode > 0) {
         // HTTP header has been send and Server response header has been handled
-//        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+        Serial.printf("[HTTP] GET code: %d\n", httpCode);
 
         // file found at server
         if(httpCode == HTTP_CODE_OK) {
             String payload = http.getString();
-//            Serial.println(payload);
+            Serial.println(payload);
               // Allocate JsonBuffer
               // Use arduinojson.org/assistant to compute the capacity.
-              const size_t capacity = JSON_OBJECT_SIZE(8) + 140;
+              const size_t capacity = JSON_ARRAY_SIZE(10) + 120;
               DynamicJsonBuffer jsonBuffer(capacity);
               // Parse JSON object
-              JsonObject& root = jsonBuffer.parseObject(payload);
+              JsonArray& root = jsonBuffer.parseArray(payload);
               if (!root.success()) {
                 Serial.println(F("Parsing failed!"));
                 return;
               }
-              _btcusd = btcusd;
-              btcusd = root["last_price"].as<float>();
-              btcvol = root["volume"].as<float>();
 
-              Serial.print("BTC/USD: ");
-              Serial.println(String(btcusd) + "@" + String(btcvol));
-        }
-    } else {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-        btcusd = 0;
-        btcvol = 0;
-    }
-
-    http.end();
-    delay(1000);
-  }
-}
-
-void fetchEth(void *pvParameters) {
-  while (online) {
-    HTTPClient http;
-    http.begin("https://api.bitfinex.com/v1/pubticker/ethusd");
-    int httpCode = http.GET();
-
-    // httpCode will be negative on error
-    if(httpCode > 0) {
-        // HTTP header has been send and Server response header has been handled
-//        Serial.printf("[HTTP] GET... code: %d\n", httpCode);
-
-        // file found at server
-        if(httpCode == HTTP_CODE_OK) {
-            String payload = http.getString();
-//            Serial.println(payload);
-              // Allocate JsonBuffer
-              // Use arduinojson.org/assistant to compute the capacity.
-              const size_t capacity = JSON_OBJECT_SIZE(8) + 140;
-              DynamicJsonBuffer jsonBuffer(capacity);
-              // Parse JSON object
-              JsonObject& root = jsonBuffer.parseObject(payload);
-              if (!root.success()) {
-                Serial.println(F("Parsing failed!"));
-                return;
-              }
-              _ethusd = ethusd;
-              ethusd = root["last_price"].as<float>();
-              ethvol = root["volume"].as<float>();
+              BID = root[0];
+              BID_SIZE = root[1];
+              ASK = root[2];
+              ASK_SIZE = root[3];
+              DAILY_CHANGE = root[4];
+              DAILY_CHANGE_PERC = root[5];
+              LAST_PRICE = root[6];
+              VOLUME = root[7];
+              _HIGH = root[8];
+              _LOW = root[9];
 
               Serial.print("ETH/USD: ");
-              Serial.println(String(ethusd) + "@" + String(ethvol));
+              Serial.println(String(LAST_PRICE) + "@" + String(VOLUME));
         }
     } else {
         Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-        ethusd = 0;
-        ethvol = 0;
+        LAST_PRICE = 0;
+        VOLUME = 0;
     }
 
     http.end();
