@@ -10,6 +10,9 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
+#include <WiFiClientSecure.h>
+#include <WebSocketsClient.h>
+
 #if defined(ARDUINO_ARCH_ESP8266)
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -24,6 +27,8 @@
 #else
 #define ARDUINO_RUNNING_CORE 1
 #endif
+
+#define USE_SERIAL Serial
 
 #include "font_latoblack.h"
 
@@ -48,6 +53,8 @@ SSD1306Wire  display(0x3c, 22, 23);
 
 WebServer Server;
 AutoConnect Portal(Server);
+
+WebSocketsClient webSocket;
 
 bool online;
 
@@ -87,7 +94,11 @@ void setup()
   display.flipScreenVertically();
   display.setBrightness(196);
 
-  xTaskCreatePinnedToCore(fetchTicker, "fetchTicker", 4096, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
+//  xTaskCreatePinnedToCore(fetchTicker, "fetchTicker", 4096, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
+
+    webSocket.beginSSL("api.bitfinex.com", 443, "/ws/2");
+//    webSocket.sendTXT("{\"event\": \"subscribe\", \"channel\": \"ticker\", \"symbol\": \"tETHUSD\"}");
+    webSocket.onEvent(webSocketEvent);
 }
 
 void loop()
@@ -95,6 +106,8 @@ void loop()
     Portal.handleClient();
 
     online = true;
+
+    webSocket.loop();
 
     renderPrice();
 }
@@ -184,4 +197,56 @@ void fetchTicker(void *pvParameters) {
     http.end();
     delay(1000);
   }
+}
+
+void hexdump(const void *mem, uint32_t len, uint8_t cols = 16) {
+  const uint8_t* src = (const uint8_t*) mem;
+  USE_SERIAL.printf("\n[HEXDUMP] Address: 0x%08X len: 0x%X (%d)", (ptrdiff_t)src, len, len);
+  for(uint32_t i = 0; i < len; i++) {
+    if(i % cols == 0) {
+      USE_SERIAL.printf("\n[0x%08X] 0x%08X: ", (ptrdiff_t)src, i);
+    }
+    USE_SERIAL.printf("%02X ", *src);
+    src++;
+  }
+  USE_SERIAL.printf("\n");
+}
+
+
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+
+
+    switch(type) {
+        case WStype_DISCONNECTED:
+            USE_SERIAL.printf("[WSc] Disconnected!\n");
+            break;
+        case WStype_CONNECTED:
+            {
+              USE_SERIAL.printf("[WSc] Connected to url: %s\n",  payload);
+
+          // send message to server when Connected
+              webSocket.sendTXT("{\"event\": \"subscribe\", \"channel\": \"ticker\", \"symbol\": \"tETHUSD\"}");
+            }
+            break;
+        case WStype_TEXT:
+            USE_SERIAL.printf("[WSc] get text: %s\n", payload);
+
+      // send message to server
+             webSocket.sendTXT("message");
+            break;
+        case WStype_BIN:
+            USE_SERIAL.printf("[WSc] get binary length: %u\n", length);
+            hexdump(payload, length);
+
+            // send data to server
+            // webSocket.sendBIN(payload, length);
+            break;
+    case WStype_ERROR:      
+    case WStype_FRAGMENT_TEXT_START:
+    case WStype_FRAGMENT_BIN_START:
+    case WStype_FRAGMENT:
+    case WStype_FRAGMENT_FIN:
+      break;
+    }
+
 }
